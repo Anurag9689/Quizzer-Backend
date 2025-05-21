@@ -76,6 +76,9 @@ func (quizEvent *QuizEvent) SetQuizJsonFileMap(dataMap map[string]any)(*string, 
 	jsonDir := os.Getenv("QUIZ_JSONS_DIR")
 	timeNs := strconv.FormatInt(time.Now().UnixNano(), 10)
 	quizJsonFile := fmt.Sprintf("%s/%s.json", jsonDir, timeNs)
+	if (len(quizEvent.QuizJsonFile) > 1) {
+		quizJsonFile = quizEvent.QuizJsonFile
+	}
 	// Convert map to JSON
 	jsonData, err := json.MarshalIndent(dataMap, "", "  ")
 	if err != nil {

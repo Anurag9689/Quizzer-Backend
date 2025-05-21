@@ -5,6 +5,7 @@
 ## Manuals
 *.json
 *.sql
+*.txt
 
 # Binaries for programs and plugins
 *.exe

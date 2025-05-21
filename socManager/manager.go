@@ -1,8 +1,9 @@
-package sockets
+package socManager
 
 import (
+    "log"
 	"sync"
-	"log"
+    "sync/atomic"
 	"github.com/gorilla/websocket"
 )
 
@@ -17,6 +18,10 @@ type Room struct {
     Clients      map[uint]*Client  // userID -> Client
     TeacherID    uint
     QuizEventID  uint
+    EventStartTime int64
+    EventEndTime int64
+    StartQuiz    atomic.Bool
+    StopRoom     chan bool
     Broadcast    chan any  // Broadcast to all
     TeacherChan  chan any  // Messages only for teacher
     Register     chan *Client
@@ -35,18 +40,21 @@ var manager = &Manager{
 }
 
 func GetManager() *Manager {
+    log.Println("Getting the room manager - GetManager")
 	return manager
 }
 
 func (m *Manager) CreateRoom(quizEventID uint, channelCode string, teacherID uint) *Room {
+    log.Printf("Creating a room - quizEventID: %d  |  channel_code: %s  |  teacherID: %d ", quizEventID, channelCode, teacherID)
     room := &Room{
         ID:           channelCode,
         QuizEventID:  quizEventID,
         TeacherID:    teacherID,
         Clients:      make(map[uint]*Client),
         Participants: make(map[uint]bool),
-        Broadcast:    make(chan any),
-        TeacherChan:  make(chan any),
+        Broadcast:    make(chan any, 10),
+        TeacherChan:  make(chan any, 10),
+        StopRoom:     make(chan bool),
         Register:     make(chan *Client),
         Unregister:   make(chan *Client),
     }
@@ -60,14 +68,17 @@ func (m *Manager) CreateRoom(quizEventID uint, channelCode string, teacherID uin
 }
 
 func (m *Manager) GetRoom(channelCode string) (*Room, bool) {
+    log.Println("GetRoom method --- ")
 	m.RLock()
 	defer m.RUnlock()
 	room, exists := m.Rooms[channelCode]
+    log.Println("GetRoom method - rooms: ", m.Rooms, "room : ", room)
 	return room, exists
 }
 
 func (r *Room) Run() {
-    for {
+    log.Printf("Room is running - Room.QuizEventID: %d\n", r.QuizEventID)
+    keepLoop: for {
         select {
         case client := <-r.Register:
             r.Lock()
@@ -85,7 +96,7 @@ func (r *Room) Run() {
             r.Unlock()
             
         case message := <-r.Broadcast:
-            r.RLock()
+            r.Lock()
             for _, client := range r.Clients {
                 if err := client.Conn.WriteJSON(message); err != nil {
                     log.Printf("Broadcast error to %d: %v", client.UserID, err)
@@ -93,27 +104,33 @@ func (r *Room) Run() {
                     delete(r.Clients, client.UserID)
                 }
             }
-            r.RUnlock()
+            log.Println("Run() method - sending message data to TeacherChan channel ...")
+            r.Unlock()
+            r.TeacherChan <- message // Forwarding the broadcast to the teacher
             
-        case message := <-r.TeacherChan:
-            r.RLock()
-            if teacherClient, exists := r.Clients[r.TeacherID]; exists {
-                if err := teacherClient.Conn.WriteJSON(message); err != nil {
-                    log.Printf("Teacher message error: %v", err)
-                    teacherClient.Conn.Close()
-                    delete(r.Clients, r.TeacherID)
-                }
+        // case message := <-r.TeacherChan:
+        //     r.RLock()
+        //     if teacherClient, exists := r.Clients[r.TeacherID]; exists {
+        //         if err := teacherClient.Conn.WriteJSON(message); err != nil {
+        //             log.Printf("Teacher message error: %v", err)
+        //             teacherClient.Conn.Close()
+        //             delete(r.Clients, r.TeacherID)
+        //         }
+        //     }
+        //     r.RUnlock()
+        case IsRoomStop := <-r.StopRoom:
+            if (IsRoomStop){
+                break keepLoop;
             }
-            r.RUnlock()
         }
+
     }
 }
 
 
 
-func (r *Room) BroadcastToTeacher(message interface{}) {
+func (r *Room) BroadcastToTeacher(message any) {
     r.RLock()
-    defer r.RUnlock()
     
     if teacherClient, exists := r.Clients[r.TeacherID]; exists {
         if err := teacherClient.Conn.WriteJSON(message); err != nil {
@@ -122,13 +139,14 @@ func (r *Room) BroadcastToTeacher(message interface{}) {
             delete(r.Clients, r.TeacherID)
         }
     }
+    r.RUnlock()
+    r.TeacherChan <- message
 }
 
 
 
-func (r *Room) BroadcastToStudent(userID uint, message interface{}) {
+func (r *Room) BroadcastToStudent(userID uint, message any) {
     r.RLock()
-    defer r.RUnlock()
     
     if client, exists := r.Clients[userID]; exists {
         if err := client.Conn.WriteJSON(message); err != nil {
@@ -137,10 +155,12 @@ func (r *Room) BroadcastToStudent(userID uint, message interface{}) {
             delete(r.Clients, userID)
         }
     }
+    r.RUnlock()
+    r.TeacherChan <- message
 }
 
 
-// func (r *Room) Broadcast(message interface{}) {
+// func (r *Room) Broadcast(message any) {
 //     r.RLock()
 //     defer r.RUnlock()
 //     for _, client := range r.Clients {

@@ -7,12 +7,10 @@ import (
 	"net/http"
 	"encoding/json"
 
-	// "github.com/gorilla/mux"
-	// "gorm.io/datatypes"
 	"OnlineQuizSystem/db"
-	"OnlineQuizSystem/utils"
 	"OnlineQuizSystem/models"
-	"OnlineQuizSystem/sockets"
+	"OnlineQuizSystem/socManager"
+	"OnlineQuizSystem/utils"
 )
 
 
@@ -39,8 +37,6 @@ func CreateQuizEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-
-
 	var reqBody struct {
 		QuizEventName string         `json:"quiz_event_name"`
 		QuizJson      map[string]any `json:"quiz_json"`
@@ -51,16 +47,14 @@ func CreateQuizEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate channel code
 	channelCode := generateChannelCode()
 
-	// Create quiz event
 	newQuizEvent := models.QuizEvent{
 		QuizEventName: reqBody.QuizEventName,
+		ChannelCode: &channelCode,
 		UserID:        user.ID,
 	}
 	
-	// Store quiz JSON in file
 	if _, err := newQuizEvent.SetQuizJsonFileMap(reqBody.QuizJson); err != nil {
 		http.Error(w, "Internal json file writing error "+err.Error(), http.StatusInternalServerError)
 		return
@@ -71,14 +65,15 @@ func CreateQuizEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create WebSocket room
-	manager := sockets.GetManager()
+	manager := socManager.GetManager()
 	manager.CreateRoom(newQuizEvent.ID, channelCode, user.ID)
 
 	response := map[string]any{
-		"quiz_event":   newQuizEvent,
 		"channel_code": channelCode,
-		// "qr_code_url":  generateQRCodeURL(channelCode),
+		"status":      "created",
+		"quiz_event":   newQuizEvent,
+		"websocket_url": "ws://"+utils.GetServerBaseUrl()+"/ws?channel_code=" + channelCode + "&user_id=" + strconv.Itoa(int(user.ID)),
+		"message" : "Please join the room and start quiz event whenever you like.",
 	}
 
 	w.WriteHeader(http.StatusCreated)

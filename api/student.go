@@ -6,11 +6,10 @@ import (
 	"net/http"
 	"encoding/json"
 
-	// "github.com/gorilla/mux"
 	"OnlineQuizSystem/db"
-	"OnlineQuizSystem/utils"
 	"OnlineQuizSystem/models"
-	"OnlineQuizSystem/sockets"
+	"OnlineQuizSystem/socManager"
+	"OnlineQuizSystem/utils"
 )
 
 func JoinQuizEvent(w http.ResponseWriter, r *http.Request) {
@@ -40,23 +39,24 @@ func JoinQuizEvent(w http.ResponseWriter, r *http.Request) {
 		return 
 	}
 
-	// Check if quiz is joinable (status pending)
 	if quizJson["status"] != "pending" {
 		http.Error(w, "Quiz is no longer joinable", http.StatusForbidden)
 		return
 	}
 
-	// Add participant (you might need a Participant model)
-	// For now, we'll just track in WebSocket room
-	manager := sockets.GetManager()
+	manager := socManager.GetManager()
 	if room, exists := manager.GetRoom(req.ChannelCode); exists {
-		room.Participants[user.ID] = false // false = not ready yet
+		room.Participants[user.ID] = true // false = not ready yet
+	} else if !exists {
+		http.Error(w, "Room for quiz event do not exists, Please contact the teacher for creating a quizEvent again.", http.StatusNotFound)
+		return 
 	}
 
 	response := map[string]any{
 		"status":      "joined",
 		"quiz_event":  quizEvent,
-		"websocket_url": "ws://"+utils.GetServerBaseUrl()+"/ws?channel=" + req.ChannelCode + "&user_id=" + strconv.Itoa(int(user.ID)),
+		"websocket_url": "ws://"+utils.GetServerBaseUrl()+"/ws?channel_code=" + req.ChannelCode + "&user_id=" + strconv.Itoa(int(user.ID)),
+		"message" : "Please join the room and wait for quiz event to start.",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
